@@ -38,7 +38,7 @@ const Navi = () => {
                     </div>
 
                     {/* --- 인증 버튼 --- */}
-                    <div>
+                    <div className="flex items-center gap-2">
                         {token ? (
                             <button 
                                 onClick={handleLogout}
@@ -47,12 +47,22 @@ const Navi = () => {
                                 로그아웃
                             </button>
                         ) : (
-                            <Link 
-                                to="/login" 
-                                className="px-3 py-1 bg-green-500 rounded-md text-sm font-medium hover:bg-green-600 transition"
-                            >
-                                로그인
-                            </Link>
+                          <>
+                                <Link 
+                                    to="/login" 
+                                    className="px-3 py-1 bg-green-500 rounded-md text-sm font-medium hover:bg-green-600 transition"
+                                >
+                                    로그인
+                                </Link>
+                                
+                                {/* 💡 추가된 회원가입 버튼 */}
+                                <Link 
+                                    to="/register" 
+                                    className="px-3 py-1 bg-indigo-400 rounded-md text-sm font-medium hover:bg-indigo-500 transition"
+                                >
+                                    회원가입
+                                </Link>
+                            </>
                         )}
                     </div>
 

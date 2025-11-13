@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { fetchItems } from "../api/itemApi";
+import { fetchItems, fetchItemDetail } from "../api/itemApi";
 import {
   Map,
   MapMarker,
@@ -7,22 +7,66 @@ import {
   useKakaoLoader,
 } from "react-kakao-maps-sdk";
 import { BarLoader } from "react-spinners";
+import useAuthStore from '../store/authStore';
+import useSavedItemStore from '../store/savedItemStore';
+
 
 
 const KAKAO_APP_KEY = import.meta.env.VITE_KAKAO_MAP_JS_KEY;
 
 const MainPage = () => {
-  const { loading: _kakaoLoading, error: kakaoError } = useKakaoLoader({
-    appkey: KAKAO_APP_KEY,
-    libraries: ["services", "clusterer"],
-  });
-
+  // ===== 모든 useState 선언 (최상단) =====
+  const [selectedItem, setSelectedItem] = useState(null); 
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [pageInfo, setPageInfo] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [mapCenter, setMapCenter] = useState({ lat: 37.5665, lng: 126.978 });
 
+  // ===== Kakao 지도 로더 =====
+  const { loading: _kakaoLoading, error: kakaoError } = useKakaoLoader({
+    appkey: KAKAO_APP_KEY,
+    libraries: ["services", "clusterer"],
+  });
+
+  // ===== Zustand 스토어 (개별 selector로 메모이제이션) =====
+  const token = useAuthStore((state) => state.token);
+  const savedItemIds = useSavedItemStore((state) => state.savedItemIds);
+  const fetchSaved = useSavedItemStore((state) => state.fetchSaved);
+  const addSaved = useSavedItemStore((state) => state.addSaved);
+  const removeSaved = useSavedItemStore((state) => state.removeSaved);
+
+  const handleItemClick = async (cltrNo) => {
+    setIsDetailLoading(true);
+    setSelectedItem(null); // 이전 정보 초기화
+    try {
+      const detailData = await fetchItemDetail(cltrNo);
+      setSelectedItem(detailData);
+    } catch (e) {
+      console.error("상세 정보 로드 실패:", e);
+      alert("상세 정보를 불러오는데 실패했습니다.");
+    } finally {
+      setIsDetailLoading(false);
+    }
+  };
+
+  const formatDate = (dateString) => {
+  if (!dateString) return '';
+  // "YYYY-MM-DD" 형식으로 변경
+  return new Date(dateString).toISOString().split('T')[0];
+};
+
+  // ===== useEffect: 로그인 시 찜 목록 1회 로드 =====
+  useEffect(() => {
+    // 토큰이 (로그인 상태) 있고, 찜 목록을 아직 로드 안했다면
+    if (token) {
+      fetchSaved();
+    }
+  }, [token, fetchSaved]); // token이 변경될 때(로그인/로그아웃) 실행
+
+  // ===== useEffect: 물건 목록 로드 =====
   useEffect(() => {
     const loadItems = async () => {
       try {
@@ -31,8 +75,20 @@ const MainPage = () => {
         const response = await fetchItems({ page: currentPage, size: 10, keyword: "" });
         console.log('API Response:', response);
         console.log('PageInfo:', response.pageInfo);
-        setItems(response.data || []);
+        
+        const responseItems = response.data || [];
+        setItems(responseItems);
         setPageInfo(response.pageInfo || {});
+
+        // 불러온 아이템 목록(responseItems)이 비어있지 않은지 확인
+        if (responseItems.length > 0) {
+          // 첫 번째 아이템의 좌표를 가져옵니다.
+          const firstItem = responseItems[0];
+          
+          // 지도 중심점(mapCenter) 상태를 첫 번째 아이템의 좌표로 업데이트
+          setMapCenter({ lat: firstItem.latitude, lng: firstItem.longitude });
+        }
+
       } catch (error) {
         setError(error.message || "데이터 로드 중 오류 발생했습니다.");
       } finally {
@@ -41,7 +97,29 @@ const MainPage = () => {
     };
 
     loadItems();
-  }, [currentPage]);
+  }, [currentPage]); // currentPage가 바뀔 때마다 실행
+
+  // --- (추가) 4. 찜하기 버튼 클릭 핸들러 ---
+  const handleSaveToggle = (e, cltrNo) => {
+    e.stopPropagation(); // 모달이 뜨지 않도록 이벤트 전파 중단
+
+    if (!token) {
+      alert("로그인이 필요합니다.");
+      // navigate('/login'); // (선택) 로그인 페이지로 이동
+      return;
+    }
+
+    // 찜 목록 Set에 있는지 확인
+    const isSaved = savedItemIds.some(savedItem => savedItem.cltrNo === items.cltrNo);
+    
+    if (isSaved) {
+      removeSaved(cltrNo); // 찜 취소
+    } else {
+      addSaved(cltrNo); // 찜하기
+    }
+  };
+
+
 
   if (kakaoError) {
     return (
@@ -50,8 +128,6 @@ const MainPage = () => {
       </div>
     );
   }
-
-  const initialCenter = { lat: 37.5665, lng: 126.978 };
 
   if (loading) {
     return (
@@ -75,7 +151,7 @@ const MainPage = () => {
       {/* 지도 영역 - 2/3 너비 */}
       <div className="w-2/3 shadow rounded-lg overflow-hidden">
         <Map
-          center={initialCenter}
+          center={mapCenter}
           style={{ width: "100%", height: "100%" }}
           level={7}
         >
@@ -101,19 +177,60 @@ const MainPage = () => {
           <p className="text-gray-500">조회된 물건이 없습니다.</p>
         ) : (
           <ul className="space-y-3">
-            {items.map((item) => (
-              <li
-                key={item.cltrNo}
-                className="p-3 border border-gray-200 rounded hover:bg-blue-50 transition cursor-pointer"
-              >
-                <p className="text-lg font-semibold text-blue-700">
-                  {item.cltrNm}
-                </p>
-                <p className="text-sm text-gray-600 truncate">
-                  {item.clnLdnmAdrs}
-                </p>
-              </li>
-            ))}
+            {items.map((item) => {
+              const isSaved = savedItemIds.includes(item.cltrNo);
+              return (
+                <li
+                  key={item.cltrNo}
+                  className="p-3 border border-gray-200 rounded hover:bg-blue-50 transition"
+                >
+                  <div 
+                    className="cursor-pointer"
+                    onClick={() => handleItemClick(item.cltrNo)}
+                  >
+                    {/* 1. 물건명 */}
+                    <p className="text-lg font-semibold text-blue-700">{item.cltrNm}</p>
+                    
+                    {/* 2. 카테고리 */}
+                    <p className="text-sm text-gray-500 mb-2">{item.ctgrFullNm}</p>
+                    
+                    {/* 3. 최신 최저/최고가 */}
+                    <div className="text-sm">
+                      <span className="text-gray-600">최신 입찰가: </span>
+                      <span className="font-bold text-red-600">
+                        {item.minBidPrc ? item.minBidPrc.toLocaleString() : '정보없음'}원
+                      </span>
+                      <span className="text-gray-500"> ~ </span>
+                      <span className="font-bold text-gray-700">
+                        {item.apslAsesAvgAmt ? item.apslAsesAvgAmt.toLocaleString() : '정보없음'}원
+                      </span>
+                    </div>
+                    
+                    {/* 4. 최신 입찰일자 */}
+                    <div className="text-sm text-gray-600 mt-1">
+                      <span>입찰 기간: </span>
+                      <span>{formatDate(item.pbctBegnDtm)}</span>
+                      <span> ~ </span>
+                      <span>{formatDate(item.pbctClsDtm)}</span>
+                    </div>
+                  </div>
+
+                  {/* 찜하기 버튼 - 로그인 상태일 때만 표시 */}
+                  {token && (
+                    <button
+                      onClick={(e) => handleSaveToggle(e, item.cltrNo)}
+                      className={`w-full mt-2 py-1 rounded text-sm font-medium transition
+                        ${isSaved 
+                          ? 'bg-red-100 text-red-600 hover:bg-red-200' 
+                          : 'bg-green-100 text-green-600 hover:bg-green-200'
+                        }`}
+                    >
+                      {isSaved ? '❤️ 찜 취소' : '💚 찜하기'}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
 
@@ -159,6 +276,50 @@ const MainPage = () => {
           {currentPage} / {pageInfo.totalPage || 1} 페이지 (총 {pageInfo.totalCount || 0}개)
         </div>
       </div>
+     {selectedItem && ( 
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50"
+          onClick={() => setSelectedItem(null)} // 배경 클릭 시 닫기
+        >
+          <div 
+            className="bg-white p-6 rounded-lg shadow-xl max-w-lg w-full"
+            onClick={(e) => e.stopPropagation()} // 모달 내부 클릭은 닫히지 않게 함
+          >
+            <h3 className="text-2xl font-bold mb-4">
+              {/* null 체크 없이 안전하게 접근 */}
+              {selectedItem.masterInfo.cltrNm}
+            </h3>
+            <p className="text-gray-700 mb-4">{selectedItem.masterInfo.clnLdnmAdrs}</p>
+
+            <h4 className="text-lg font-semibold mb-2">가격 변동 이력 ({selectedItem.priceHistory.length}건)</h4>
+            
+            {/* 상세 정보 로딩 상태 표시 추가 (선택 사항) */}
+            {isDetailLoading ? (
+                <BarLoader color="#36d7b7" />
+            ) : (
+                <ul className="space-y-2 max-h-60 overflow-y-auto">
+                    {selectedItem.priceHistory.map((history) => (
+                        <li key={history.cltrHstrNo} className="flex justify-between border-b pb-1">
+                            <span className="text-gray-600">
+                                {new Date(history.pbctClsDtm).toLocaleDateString()} 마감
+                            </span>
+                            <span className="font-bold">
+                                {history.minBidPrc.toLocaleString()}원
+                            </span>
+                        </li>
+                    ))}
+                </ul>
+            )}
+            
+            <button 
+              onClick={() => setSelectedItem(null)}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

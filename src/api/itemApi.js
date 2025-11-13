@@ -1,7 +1,8 @@
 import api from './axiosInstance';
 
-// 백엔드의 Item 조회 API (Phase 2-6에 해당)
+// 백엔드의 Item 조회 API 
 // PageResponseDTO 형식의 응답을 가정합니다.
+
 export async function fetchItems({ page = 1, size = 10, keyword = '' }) {
     try {
         const response = await api.get("/items", {
@@ -29,4 +30,11 @@ export async function fetchItems({ page = 1, size = 10, keyword = '' }) {
     }
     throw error;
     }
+    
 }
+
+export const fetchItemDetail = async (cltrNo) => {
+ const response = await api.get(`/items/${cltrNo}`);
+  return response.data;
+};
+
