@@ -1,19 +1,8 @@
 import React, { useState, useEffect } from "react";
-import api from "../api/axiosInstance"; // JWT가 포함된 인스턴스
 import useAuthStore from "../store/authStore";
 import { ClipLoader } from "react-spinners";
 import { useNavigate } from "react-router-dom";
-
-// 찜 목록 API 호출 함수
-async function fetchSavedItems() {
-  try {
-    const response = await api.get("/saved-items");
-    // 백엔드에서 AuctionMasterDTO 리스트를 반환한다고 가정
-    return response.data;
-  } catch (error) {
-    throw error;
-  }
-}
+import { fetchSavedItems } from "../api/myPageApi";
 
 const MyPage = () => {
   const [savedItems, setSavedItems] = useState([]);
