@@ -3,11 +3,11 @@ import api from './axiosInstance';
 // 백엔드의 Item 조회 API 
 // PageResponseDTO 형식의 응답을 가정합니다.
 
-export async function fetchItems({ page = 1, size = 10, keyword = '' }) {
+export async function fetchItems({ page = 1, size = 10, keyword = '', region = '' }) {
     try {
         const response = await api.get("/items", {
             // baseURL이 이미 /api/v1로 설정되어 있으므로, /items만 사용합니다.
-            params: { page, size, keyword }
+            params: { page, size, keyword, region }
         });
         
         // 백엔드가 PageResponseDTO 객체를 반환한다고 가정합니다.

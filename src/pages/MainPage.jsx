@@ -10,9 +10,28 @@ import { BarLoader } from "react-spinners";
 import useAuthStore from '../store/authStore';
 import useSavedItemStore from '../store/savedItemStore';
 
-
-
 const KAKAO_APP_KEY = import.meta.env.VITE_KAKAO_MAP_JS_KEY;
+
+const REGIONS = [
+  { name: "전체", value: "" },
+  { name: "서울특별시", value: "서울특별시" },
+  { name: "경기도", value: "경기도" },
+  { name: "인천광역시", value: "인천광역시" },
+  { name: "강원특별자치도", value: "강원특별자치도" },
+  { name: "충청남도", value: "충청남도" },
+  { name: "충청북도", value: "충청북도" },
+  { name: "대전광역시", value: "대전광역시" },
+  { name: "세종특별자치시", value: "세종특별자치시" },
+  { name: "전북특별자치도", value: "전북특별자치도" },
+  { name: "전라남도", value: "전라남도" },
+  { name: "광주광역시", value: "광주광역시" },
+  { name: "경상북도", value: "경상북도" },
+  { name: "경상남도", value: "경상남도" },
+  { name: "대구광역시", value: "대구광역시" },
+  { name: "울산광역시", value: "울산광역시" },
+  { name: "부산광역시", value: "부산광역시" },
+  { name: "제주특별자치도", value: "제주특별자치도" }
+];
 
 const MainPage = () => {
   // ===== 모든 useState 선언 (최상단) =====
@@ -24,6 +43,11 @@ const MainPage = () => {
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [mapCenter, setMapCenter] = useState({ lat: 37.5665, lng: 126.978 });
+  
+  // 필터용 useState
+  const [inputKeyword, setInputKeyword] = useState("");
+  const [activeKeyword, setActiveKeyword] = useState("");
+  const [activeRegion, setActiveRegion] = useState("");
 
   // ===== Kakao 지도 로더 =====
   const { loading: _kakaoLoading, error: kakaoError } = useKakaoLoader({
@@ -52,6 +76,16 @@ const MainPage = () => {
     }
   };
 
+  const handleSearch = () => {
+    setCurrentPage(1);
+    setActiveKeyword(inputKeyword);
+  };
+
+  const handleRegionChange = (e) => {
+    setCurrentPage(1);
+    setActiveRegion(e.target.value);
+  };
+
   const formatDate = (dateString) => {
   if (!dateString) return '';
   // "YYYY-MM-DD" 형식으로 변경
@@ -72,7 +106,12 @@ const MainPage = () => {
       try {
         setLoading(true);
         setError(null);
-        const response = await fetchItems({ page: currentPage, size: 10, keyword: "" });
+        const response = await fetchItems({ 
+          page: currentPage, 
+          size: 10, 
+          keyword: activeKeyword, 
+          region: activeRegion 
+        });
         console.log('API Response:', response);
         console.log('PageInfo:', response.pageInfo);
         
@@ -97,7 +136,7 @@ const MainPage = () => {
     };
 
     loadItems();
-  }, [currentPage]); // currentPage가 바뀔 때마다 실행
+  }, [currentPage, activeKeyword, activeRegion]); // currentPage, activeKeyword, activeRegion이 바뀔 때마다 실행
 
   // --- (추가) 4. 찜하기 버튼 클릭 핸들러 ---
   const handleSaveToggle = (e, cltrNo) => {
@@ -168,15 +207,50 @@ const MainPage = () => {
       </div>
 
       {/* 목록 영역 - 1/3 너비 */}
-      <div className="w-1/3 p-4 bg-white shadow rounded-lg overflow-y-auto border">
+      <div className="w-1/3 p-4 bg-white shadow rounded-lg border flex flex-col">
         <h2 className="text-2xl font-bold mb-4 text-gray-800">
           경매 물건 목록 ({pageInfo.totalCount || 0}개)
         </h2>
 
-        {items.length === 0 ? (
-          <p className="text-gray-500">조회된 물건이 없습니다.</p>
-        ) : (
-          <ul className="space-y-3">
+        {/* 필터링 및 검색 UI */}
+        <div className="mb-4 space-y-2">
+          <select
+            value={activeRegion}
+            onChange={handleRegionChange}
+            className="w-full p-2 border rounded-md"
+          >
+            {REGIONS.map(r => (
+              <option key={r.name} value={r.value}>{r.name}</option>
+            ))}
+          </select>
+          
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={inputKeyword}
+              onChange={(e) => setInputKeyword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="물건명, 주소 등 키워드 검색"
+              className="flex-grow p-2 border rounded-md"
+            />
+            <button
+              onClick={handleSearch}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              검색
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-grow overflow-y-auto">
+          {loading ? (
+             <div className="flex justify-center items-center h-full">
+               <BarLoader color="#36d7b7" />
+             </div>
+          ) : items.length === 0 ? (
+            <p className="text-gray-500 text-center mt-10">조회된 물건이 없습니다.</p>
+          ) : (
+            <ul className="space-y-3">
             {items.map((item) => {
               const isSaved = savedItemIds.includes(item.cltrNo);
               return (
@@ -231,12 +305,14 @@ const MainPage = () => {
                 </li>
               );
             })}
-          </ul>
-        )}
-
-        {/* 페이지네이션 UI */}
-        {pageInfo.totalPage > 1 && (
-          <div className="mt-4 flex justify-center items-center space-x-2">
+            </ul>
+          )}
+        </div>
+        
+        <div className="mt-auto pt-4">
+          {/* 페이지네이션 UI */}
+          {pageInfo.totalPage > 1 && (
+            <div className="flex justify-center items-center space-x-2">
             <button
               onClick={() => setCurrentPage(currentPage - 1)}
               disabled={currentPage === 1}
@@ -269,11 +345,12 @@ const MainPage = () => {
             >
               다음
             </button>
+            </div>
+          )}
+          
+          <div className="mt-2 text-center text-sm text-gray-500">
+            {currentPage} / {pageInfo.totalPage || 1} 페이지 (총 {pageInfo.totalCount || 0}개)
           </div>
-        )}
-        
-        <div className="mt-2 text-center text-sm text-gray-500">
-          {currentPage} / {pageInfo.totalPage || 1} 페이지 (총 {pageInfo.totalCount || 0}개)
         </div>
       </div>
      {selectedItem && ( 
