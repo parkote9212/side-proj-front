@@ -112,8 +112,6 @@ const MainPage = () => {
           keyword: activeKeyword,
           region: activeRegion,
         });
-        console.log("API Response:", response);
-        console.log("PageInfo:", response.pageInfo);
 
         const responseItems = response.data || [];
         setItems(responseItems);
