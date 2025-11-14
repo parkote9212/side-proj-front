@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { fetchItems, fetchItemDetail } from "../api/itemApi";
-import {
-  Map,
-  MapMarker,
-  MarkerClusterer,
-  useKakaoLoader,
-} from "react-kakao-maps-sdk";
+// import {
+//   Map,
+//   MapMarker,
+//   MarkerClusterer,
+//   useKakaoLoader,
+// } from "react-kakao-maps-sdk";
 import { BarLoader } from "react-spinners";
 import useAuthStore from "../store/authStore";
 import useSavedItemStore from "../store/savedItemStore";
@@ -48,12 +48,83 @@ const MainPage = () => {
   const [inputKeyword, setInputKeyword] = useState("");
   const [activeKeyword, setActiveKeyword] = useState("");
   const [activeRegion, setActiveRegion] = useState("");
+  
+  // 임시 필터 값들 (입력 중)
+  const [tempPriceFrom, setTempPriceFrom] = useState("");
+  const [tempPriceTo, setTempPriceTo] = useState("");
+  const [tempDateFrom, setTempDateFrom] = useState("");
+  const [tempDateTo, setTempDateTo] = useState("");
+  
+  // 적용된 필터 값들 (API 호출용)
+  const [priceFrom, setPriceFrom] = useState("");
+  const [priceTo, setPriceTo] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
-  // ===== Kakao 지도 로더 =====
-  const { loading: _kakaoLoading, error: kakaoError } = useKakaoLoader({
-    appkey: KAKAO_APP_KEY,
-    libraries: ["services", "clusterer"],
-  });
+  // ===== 카카오맵 직접 로드 =====
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const mapRef = useRef(null);
+  
+  useEffect(() => {
+    if (window.kakao && window.kakao.maps) {
+      setMapLoaded(true);
+      return;
+    }
+    
+    const script = document.createElement('script');
+    script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_APP_KEY}&autoload=false`;
+    script.async = true;
+    script.onload = () => {
+      window.kakao.maps.load(() => {
+        setMapLoaded(true);
+      });
+    };
+    document.head.appendChild(script);
+  }, []);
+  
+  // 카카오맵 초기화
+  useEffect(() => {
+    if (mapLoaded && mapRef.current && window.kakao && window.kakao.maps) {
+      try {
+        const container = mapRef.current;
+        const options = {
+          center: new window.kakao.maps.LatLng(mapCenter.lat, mapCenter.lng),
+          level: 7
+        };
+        const map = new window.kakao.maps.Map(container, options);
+        
+        // 지도 크기 재설정
+        setTimeout(() => {
+          map.relayout();
+        }, 100);
+        
+        // 마커 추가
+        items.forEach(item => {
+          // null 값 및 유효성 검사
+          if (item.latitude === null || item.longitude === null || 
+              item.latitude === 0 || item.longitude === 0) {
+            console.warn("Skipping null/zero coordinates:", item.cltrNo, item.latitude, item.longitude);
+            return;
+          }
+          
+          const lat = Number(item.latitude);
+          const lng = Number(item.longitude);
+          
+          if (!isNaN(lat) && !isNaN(lng)) {
+            const markerPosition = new window.kakao.maps.LatLng(lat, lng);
+            const marker = new window.kakao.maps.Marker({
+              position: markerPosition
+            });
+            marker.setMap(map);
+          } else {
+            console.warn("Skipping invalid marker coordinates:", item.cltrNo, lat, lng);
+          }
+        });
+      } catch (error) {
+        console.error('Kakao Map Error:', error);
+      }
+    }
+  }, [mapLoaded, items, mapCenter]);
 
   // ===== Zustand 스토어 (개별 selector로 메모이제이션) =====
   const token = useAuthStore((state) => state.token);
@@ -79,6 +150,10 @@ const MainPage = () => {
   const handleSearch = () => {
     setCurrentPage(1);
     setActiveKeyword(inputKeyword);
+    setPriceFrom(tempPriceFrom);
+    setPriceTo(tempPriceTo);
+    setDateFrom(tempDateFrom);
+    setDateTo(tempDateTo);
   };
 
   const handleRegionChange = (e) => {
@@ -94,11 +169,12 @@ const MainPage = () => {
 
   // ===== useEffect: 로그인 시 찜 목록 1회 로드 =====
   useEffect(() => {
-    // 토큰이 (로그인 상태) 있고, 찜 목록을 아직 로드 안했다면
     if (token) {
-      fetchSaved();
+      fetchSaved().catch(error => {
+        console.warn('찜 목록 로드 실패 (백엔드 오류):', error.message);
+      });
     }
-  }, [token, fetchSaved]); // token이 변경될 때(로그인/로그아웃) 실행
+  }, [token, fetchSaved]);
 
   // ===== useEffect: 물건 목록 로드 =====
   useEffect(() => {
@@ -111,19 +187,36 @@ const MainPage = () => {
           size: 10,
           keyword: activeKeyword,
           region: activeRegion,
+          priceFrom,
+          priceTo,
+          dateFrom,
+          dateTo,
         });
 
         const responseItems = response.data || [];
         setItems(responseItems);
+        console.log("ITEMS LOADED:", responseItems);
+        console.log("FIRST ITEM:", responseItems[0]);
         setPageInfo(response.pageInfo || {});
 
-        // 불러온 아이템 목록(responseItems)이 비어있지 않은지 확인
         if (responseItems.length > 0) {
-          // 첫 번째 아이템의 좌표를 가져옵니다.
-          const firstItem = responseItems[0];
-
-          // 지도 중심점(mapCenter) 상태를 첫 번째 아이템의 좌표로 업데이트
-          setMapCenter({ lat: firstItem.latitude, lng: firstItem.longitude });
+          // 유효한 좌표를 가진 첫 번째 아이템 찾기
+          const validItem = responseItems.find(item => 
+            item.latitude !== null && item.longitude !== null &&
+            item.latitude !== 0 && item.longitude !== 0
+          );
+          
+          if (validItem) {
+            console.log("VALID ITEM COORDS:", validItem.latitude, validItem.longitude);
+            const lat = Number(validItem.latitude);
+            const lng = Number(validItem.longitude);
+            
+            if (!isNaN(lat) && !isNaN(lng)) {
+              setMapCenter({ lat, lng });
+            }
+          } else {
+            console.warn("No valid coordinates found in items");
+          }
         }
       } catch (error) {
         setError(error.message || "데이터 로드 중 오류 발생했습니다.");
@@ -133,7 +226,7 @@ const MainPage = () => {
     };
 
     loadItems();
-  }, [currentPage, activeKeyword, activeRegion]); // currentPage, activeKeyword, activeRegion이 바뀔 때마다 실행
+  }, [currentPage, activeKeyword, activeRegion, priceFrom, priceTo, dateFrom, dateTo]); // currentPage, activeKeyword, activeRegion이 바뀔 때마다 실행
 
   // --- (추가) 4. 찜하기 버튼 클릭 핸들러 ---
   const handleSaveToggle = (e, cltrNo) => {
@@ -145,10 +238,8 @@ const MainPage = () => {
       return;
     }
 
-    // 찜 목록 Set에 있는지 확인
-    const isSaved = savedItemIds.some(
-      (savedItem) => savedItem.cltrNo === items.cltrNo
-    );
+    // 찜 목록에 현재 cltrNo가 있는지 확인
+    const isSaved = savedItemIds.includes(cltrNo);
 
     if (isSaved) {
       removeSaved(cltrNo); // 찜 취소
@@ -157,19 +248,13 @@ const MainPage = () => {
     }
   };
 
-  if (kakaoError) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <p className="text-red-600">카카오맵 로드 중 오류 발생: {kakaoError}</p>
-      </div>
-    );
-  }
+
 
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen">
         <BarLoader color="#36d7b7" />
-        <p className="ml-4 text-gray-600">데이터를 불러오는 중입니다...</p>
+        <p className="ml-4 text-gray-600">데이터를 불러오는 중...</p>
       </div>
     );
   }
@@ -183,38 +268,41 @@ const MainPage = () => {
   }
 
   return (
-    <div className="flex h-screen p-4 gap-4 bg-white">
-      {/* 지도 영역 - 2/3 너비 */}
-      <div className="w-2/3 shadow rounded-lg overflow-hidden">
-        <Map
-          center={mapCenter}
-          style={{ width: "100%", height: "100%" }}
-          level={7}
-        >
-          <MarkerClusterer averageCenter={true}>
-            {items.map((item) => (
-              <MapMarker
-                key={item.cltrNo}
-                position={{ lat: item.latitude, lng: item.longitude }}
-                clickable={true}
-              />
-            ))}
-          </MarkerClusterer>
-        </Map>
+    <div className="flex flex-col lg:flex-row h-screen p-2 lg:p-4 gap-2 lg:gap-4 bg-gray-50">
+      {/* 지도 영역 */}
+      <div className="w-full lg:w-2/3 h-64 lg:h-full shadow-lg rounded-xl overflow-hidden bg-white">
+        {mapLoaded ? (
+          <div 
+            ref={mapRef} 
+            className="w-full h-full min-h-[400px] bg-gray-100"
+          />
+        ) : (
+          <div className="flex justify-center items-center h-full bg-gradient-to-br from-blue-50 to-indigo-100">
+            <div className="text-center">
+              <BarLoader color="#3b82f6" />
+              <p className="mt-4 text-gray-600 font-medium">카카오맵 로드 중...</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 목록 영역 - 1/3 너비 */}
-      <div className="w-1/3 p-4 bg-white shadow rounded-lg border flex flex-col">
-        <h2 className="text-2xl font-bold mb-4 text-gray-800">
-          경매 물건 목록 ({pageInfo.totalCount || 0}개)
-        </h2>
+      {/* 목록 영역 */}
+      <div className="w-full lg:w-1/3 bg-white shadow-lg rounded-xl border border-gray-200 flex flex-col overflow-hidden">
+        {/* 헤더 */}
+        <div className="p-4 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+          <h2 className="text-xl lg:text-2xl font-bold text-gray-800 mb-1">
+            경매 물건 목록
+          </h2>
+          <p className="text-sm text-gray-600">총 {pageInfo.totalCount || 0}개 물건</p>
+        </div>
 
         {/* 필터링 및 검색 UI */}
-        <div className="mb-4 space-y-2">
+        <div className="p-4 space-y-3 border-b border-gray-100">
+          {/* 지역 선택 */}
           <select
             value={activeRegion}
             onChange={handleRegionChange}
-            className="w-full p-2 border rounded-md"
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
           >
             {REGIONS.map((r) => (
               <option key={r.name} value={r.value}>
@@ -223,128 +311,164 @@ const MainPage = () => {
             ))}
           </select>
 
+          {/* 키워드 검색 */}
           <div className="flex gap-2">
             <input
               type="text"
               value={inputKeyword}
               onChange={(e) => setInputKeyword(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              placeholder="물건명, 주소 등 키워드 검색"
-              className="flex-grow p-2 border rounded-md"
+              placeholder="물건명, 주소 등 검색"
+              className="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             />
             <button
               onClick={handleSearch}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-medium shadow-md hover:shadow-lg"
             >
               검색
             </button>
           </div>
+
+          {/* 가격 범위 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-700">가격 범위</label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                value={tempPriceFrom}
+                onChange={(e) => setTempPriceFrom(e.target.value)}
+                placeholder="최저가"
+                className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+              <span className="text-gray-500 font-medium">~</span>
+              <input
+                type="number"
+                value={tempPriceTo}
+                onChange={(e) => setTempPriceTo(e.target.value)}
+                placeholder="최고가"
+                className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+            </div>
+          </div>
+
+          {/* 날짜 범위 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-700">입찰 기간</label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="date"
+                value={tempDateFrom}
+                onChange={(e) => setTempDateFrom(e.target.value)}
+                className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+              <span className="text-gray-500 font-medium">~</span>
+              <input
+                type="date"
+                value={tempDateTo}
+                onChange={(e) => setTempDateTo(e.target.value)}
+                className="flex-1 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+            </div>
+          </div>
         </div>
 
-        <div className="flex-grow overflow-y-auto">
+        <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
             <div className="flex justify-center items-center h-full">
-              <BarLoader color="#36d7b7" />
+              <div className="text-center">
+                <BarLoader color="#3b82f6" />
+                <p className="mt-4 text-gray-600">데이터 로딩 중...</p>
+              </div>
             </div>
           ) : items.length === 0 ? (
-            <p className="text-gray-500 text-center mt-10">
-              조회된 물건이 없습니다.
-            </p>
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="text-6xl mb-4">📋</div>
+              <p className="text-gray-500 text-lg mb-2">조회된 물건이 없습니다</p>
+              <p className="text-gray-400 text-sm">다른 검색 조건을 시도해보세요</p>
+            </div>
           ) : (
-            <ul className="space-y-3">
+            <div className="space-y-3">
               {items.map((item) => {
                 const isSaved = savedItemIds.includes(item.cltrNo);
                 return (
-                  <li
+                  <div
                     key={item.cltrNo}
-                    className="p-3 border border-gray-200 rounded hover:bg-blue-50 transition"
+                    className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-lg hover:border-blue-300 transition-all duration-200 cursor-pointer"
+                    onClick={() => handleItemClick(item.cltrNo)}
                   >
-                    <div
-                      className="cursor-pointer"
-                      onClick={() => handleItemClick(item.cltrNo)}
-                    >
-                      {/* 1. 물건명 */}
-                      <p className="text-lg font-semibold text-blue-700">
-                        {item.cltrNm}
-                      </p>
+                    <h3 className="text-lg font-bold text-gray-800 mb-2 hover:text-blue-600 transition-colors">
+                      {item.cltrNm}
+                    </h3>
 
-                      {/* 2. 카테고리 */}
-                      <p className="text-sm text-gray-500 mb-2">
-                        {item.ctgrFullNm}
-                      </p>
+                    <div className="inline-block px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full mb-3">
+                      {item.ctgrFullNm}
+                    </div>
 
-                      {/* 3. 최신 최저/최고가 */}
-                      <div className="text-sm">
-                        <span className="text-gray-600">최신 입찰가: </span>
+                    <div className="bg-gradient-to-r from-red-50 to-orange-50 p-3 rounded-lg mb-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">입찰 시작가</span>
                         <span className="font-bold text-red-600">
-                          {item.minBidPrc
-                            ? item.minBidPrc.toLocaleString()
-                            : "정보없음"}
-                          원
-                        </span>
-                        <span className="text-gray-500"> ~ </span>
-                        <span className="font-bold text-gray-700">
-                          {item.apslAsesAvgAmt
-                            ? item.apslAsesAvgAmt.toLocaleString()
-                            : "정보없음"}
-                          원
+                          {item.minBidPrc ? `${item.minBidPrc.toLocaleString()}원` : "정보없음"}
                         </span>
                       </div>
-
-                      {/* 4. 최신 입찰일자 */}
-                      <div className="text-sm text-gray-600 mt-1">
-                        <span>입찰 기간: </span>
-                        <span>{formatDate(item.pbctBegnDtm)}</span>
-                        <span> ~ </span>
-                        <span>{formatDate(item.pbctClsDtm)}</span>
+                      <div className="flex justify-between items-center mt-1">
+                        <span className="text-sm text-gray-600">감정가</span>
+                        <span className="font-semibold text-gray-700">
+                          {item.apslAsesAvgAmt ? `${item.apslAsesAvgAmt.toLocaleString()}원` : "정보없음"}
+                        </span>
                       </div>
                     </div>
 
-                    {/* 찜하기 버튼 - 로그인 상태일 때만 표시 */}
+                    <div className="flex items-center text-sm text-gray-600 mb-3">
+                      <span>📅 {formatDate(item.pbctBegnDtm)} ~ {formatDate(item.pbctClsDtm)}</span>
+                    </div>
+
                     {token && (
                       <button
-                        onClick={(e) => handleSaveToggle(e, item.cltrNo)}
-                        className={`w-full mt-2 py-1 rounded text-sm font-medium transition
-                        ${
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSaveToggle(e, item.cltrNo);
+                        }}
+                        className={`w-full py-2 px-4 rounded-lg text-sm font-medium transition-all ${
                           isSaved
-                            ? "bg-red-100 text-red-600 hover:bg-red-200"
-                            : "bg-green-100 text-green-600 hover:bg-green-200"
+                            ? "bg-red-500 text-white hover:bg-red-600"
+                            : "bg-green-500 text-white hover:bg-green-600"
                         }`}
                       >
                         {isSaved ? "❤️ 찜 취소" : "💚 찜하기"}
                       </button>
                     )}
-                  </li>
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           )}
         </div>
 
-        <div className="mt-auto pt-4">
-          {/* 페이지네이션 UI */}
+        {/* 페이지네이션 */}
+        <div className="border-t border-gray-200 p-4 bg-gray-50">
           {pageInfo.totalPage > 1 && (
-            <div className="flex justify-center items-center space-x-2">
+            <div className="flex justify-center items-center space-x-1 mb-3">
               <button
                 onClick={() => setCurrentPage(currentPage - 1)}
                 disabled={currentPage === 1}
-                className="px-3 py-2 rounded-md bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                className="px-4 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 이전
               </button>
 
               {Array.from(
-                { length: Math.min(pageInfo.totalPage, 10) },
+                { length: Math.min(pageInfo.totalPage, 5) },
                 (_, index) => {
                   const pageNum = index + 1;
                   return (
                     <button
                       key={pageNum}
                       onClick={() => setCurrentPage(pageNum)}
-                      className={`px-3 py-2 rounded-md ${
+                      className={`px-4 py-2 rounded-lg transition-all ${
                         currentPage === pageNum
-                          ? "bg-blue-600 text-white"
-                          : "bg-white text-gray-700 hover:bg-gray-100"
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "bg-white border border-gray-300 text-gray-700 hover:bg-blue-50 hover:border-blue-300"
                       }`}
                     >
                       {pageNum}
@@ -356,16 +480,15 @@ const MainPage = () => {
               <button
                 onClick={() => setCurrentPage(currentPage + 1)}
                 disabled={currentPage === pageInfo.totalPage}
-                className="px-3 py-2 rounded-md bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                className="px-4 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               >
                 다음
               </button>
             </div>
           )}
 
-          <div className="mt-2 text-center text-sm text-gray-500">
-            {currentPage} / {pageInfo.totalPage || 1} 페이지 (총{" "}
-            {pageInfo.totalCount || 0}개)
+          <div className="text-center text-sm text-gray-600">
+            {currentPage} / {pageInfo.totalPage || 1} 페이지
           </div>
         </div>
       </div>

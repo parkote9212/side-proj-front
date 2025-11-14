@@ -70,7 +70,7 @@ const Navi = () => {
             </div>
             
             {/* Tailwind CSS를 위한 임시 스타일 (Navi.jsx 내부에 정의) */}
-            <style jsx>{`
+            <style>{`
                 .nav-link {
                     padding: 0 1rem;
                     display: flex;
